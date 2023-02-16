@@ -465,9 +465,33 @@ def normalize(audio, meter, loudness=-25, max_amp=0.9):
     return torch.from_numpy(signal)
 
 
-def mix(src1, src2, overlap_samples):
-    """Mix two audio samples"""
-    n_diff = len(src1) - len(src2)
+def mix(src1: torch.Tensor, src2: torch.Tensor, overlap_samples: int):
+    """Mix two audio samples
+
+    Arguments
+    ---------
+    src1: torch.Tensor
+        Audio input of shape [C, T],
+        where:
+        C = number of channels
+        T = time
+    src2: torch.Tensor
+        Audio input of shape [C, T]
+    overlap_samples: int
+        Number of overlapping samples
+
+    Output
+    ------
+    mixture: torch.Tensor
+        Audio output with mixed inputs, which overlap exactly `overlap_samples`,
+        the region of overlap is uniformly sampled
+    sources: torch.Tensor
+        Padded sources
+    paddings: list[tuple]
+        List with paddings, where each padding is represented by a tuple
+        of start and end sample
+    """
+    n_diff = src1.size(-1) - src2.size(-1)
     swapped = False
     if n_diff >= 0:
         longer_src = src1
@@ -477,8 +501,8 @@ def mix(src1, src2, overlap_samples):
         longer_src = src2
         shorter_src = src1
         n_diff = abs(n_diff)
-    n_long = len(longer_src)
-    n_short = len(shorter_src)
+    n_long = longer_src.size(-1)
+    n_short = shorter_src.size(-1)
 
     paddings = []
     if overlap_samples >= n_short:
@@ -515,10 +539,11 @@ def mix(src1, src2, overlap_samples):
     return mixture, sources, paddings
 
 
-def __pad_sources__(sources, paddings):
+def __pad_sources__(sources: list[torch.Tensor], paddings):
     result = []
     for src, (lpad, rpad) in zip(sources, paddings):
-        nsrc = torch.cat((torch.zeros(lpad), src, torch.zeros(rpad)))
+        C = src.size(0)
+        nsrc = torch.cat((torch.zeros(C, lpad), src, torch.zeros(C, rpad)))
         result.append(nsrc)
     return result
 
