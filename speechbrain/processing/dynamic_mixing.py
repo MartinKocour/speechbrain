@@ -10,6 +10,7 @@ from speechbrain.processing.signal_processing import reverberate
 from speechbrain.utils.data_pipeline import DataPipeline
 
 import torch
+import torch.nn.functional as F
 import torchaudio
 import numpy as np
 import numbers
@@ -48,6 +49,8 @@ class DynamicMixingConfig:
     sample_rate: int = 16000
     min_source_len: int = 16000
     max_source_len: int = 320000
+    multi_channel: bool = False
+    n_channels: int = 2
 
     @classmethod
     def from_hparams(cls, hparams):
@@ -235,7 +238,7 @@ class DynamicMixingDataset(torch.utils.data.Dataset):
                 self.config.min_source_len, self.config.max_source_len
             )
             mixture, _, noise, rir = self.__postprocess__(
-                torch.zeros(length), [], mix_info=mix_info
+                torch.zeros(self.config.n_channels, length), [], mix_info=mix_info
             )
             mix_info["speakers"].append("no-spkr")
             return mixture, [], noise, rir, mix_info
@@ -292,12 +295,13 @@ class DynamicMixingDataset(torch.utils.data.Dataset):
                 [paddings[1] for _ in range(len(padded_sources))],
             )
             padded_sources.append(padded_tmp[0])
-        mixture, padded_sources, noise, rir = self.__postprocess__(
-            mixture, padded_sources, mix_info=mix_info
-        )
 
         if self.dataset is not None:
             mix_info["data"] = [self.dataset[idx] for idx in source_idxs]
+
+        mixture, padded_sources, noise, rir = self.__postprocess__(
+            mixture, padded_sources, mix_info=mix_info
+        )
 
         return mixture, padded_sources, noise, rir, mix_info
 
@@ -307,7 +311,14 @@ class DynamicMixingDataset(torch.utils.data.Dataset):
             fs == self.orig_sr
         ), f"{self.orig_sr} Hz sampling rate expected, but found {fs}"
         source = self.resampler(source)
-        source = source[0]  # Support only single channel
+
+        if self.config.multi_channel:
+            if source.size(0) < self.config.n_channels:
+                # we do not have so many channels, will copy paste them
+                source = source.repeat(self.config.n_channels, 1)
+            source = source[:self.config.n_channels, :]
+        else:
+            source = source[:1, :] # pick 1st channel, but keep dim
 
         if not is_noise:
             # cut the source to a random length
@@ -318,13 +329,12 @@ class DynamicMixingDataset(torch.utils.data.Dataset):
             offset = random.randint(0, max(len(source) - length, 0))
 
             # noise is automatically adjusted to the mixture size
-            source = source[offset : offset + length]
+            source = source[:, offset : offset + length]
             mix_info["source_lengths"] = mix_info.get("source_lengths", [])
             mix_info["source_lengths"].append(length)
 
         if self.config.audio_norm:
             # normalize loudness and apply random gain
-            mix_info["source_loudness"] = mix_info.get("source_loudness", [])
             if is_noise:
                 loudness = random.uniform(
                     self.config.noise_min_loudness,
@@ -336,6 +346,7 @@ class DynamicMixingDataset(torch.utils.data.Dataset):
                     self.config.audio_min_loudness,
                     self.config.audio_max_loudness,
                 )
+                mix_info["source_loudness"] = mix_info.get("source_loudness", [])
                 mix_info["source_loudness"].append(loudness)
 
             source = normalize(
@@ -359,11 +370,17 @@ class DynamicMixingDataset(torch.utils.data.Dataset):
                 fs == self.orig_sr
             ), f"{self.orig_sr} Hz sampling rate expected, but found {fs}"
             rir = self.resampler(rir)
-            rir = rir[0]  # pick 1st channel
 
-            mixture = reverberate(mixture, rir)
+            if self.config.multi_channel:
+                if rir.size(0) < self.config.n_channels:
+                    rir = rir.repeat(self.config.n_channels, 1)
+                rir = rir[:self.config.n_channels, :]
+            else:
+                rir = rir[:1, :]
+
+            mixture = __reverberate__(mixture, rir, mix_info)
             if self.config.reverb_sources:
-                sources = [reverberate(x, rir) for x in sources]
+                sources = [__reverberate__(x, rir) for x in sources]
 
         # add noise
         noise = None
@@ -376,10 +393,10 @@ class DynamicMixingDataset(torch.utils.data.Dataset):
                 mix_info["noise"], is_noise=True, mix_info=mix_info
             )
             noise = noise.repeat(
-                mixture.size(0) // noise.size(0) + 1
+                1, mixture.size(-1) // noise.size(-1) + 1
             )  # extend the noise
 
-            noise = noise[: mixture.size(0)]
+            noise = noise[:, :mixture.size(-1)]
             mixture += noise
 
         # replace zeros with small gaussian noise
@@ -402,7 +419,16 @@ class DynamicMixingDataset(torch.utils.data.Dataset):
         if noise is not None:
             noise = gain * noise
 
-        mix_info["duration"] = mixture.size(0) / self.config.sample_rate
+        if not self.config.multi_channel:
+            # pick 1st channel
+            mixture = mixture[0]
+            sources = [src[0] for src in sources]
+            if noise is not None:
+                noise = noise[0]
+            if rir is not None:
+                rir = rir[0]
+
+        mix_info["duration"] = mixture.size(-1) / self.config.sample_rate
         return mixture, sources, noise, rir
 
     def __len__(self):
@@ -451,7 +477,7 @@ class DynamicMixingDataset(torch.utils.data.Dataset):
 
 def normalize(audio, meter, loudness=-25, max_amp=0.9):
     """This function normalizes the loudness of audio signal"""
-    audio = audio.numpy()
+    audio = audio.t().numpy() # [T, C]
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         c_loudness = meter.integrated_loudness(audio)
@@ -462,7 +488,7 @@ def normalize(audio, meter, loudness=-25, max_amp=0.9):
         if np.max(np.abs(signal)) >= 1:
             signal = signal * max_amp / np.max(np.abs(signal))
 
-    return torch.from_numpy(signal)
+    return torch.from_numpy(signal).t()
 
 
 def mix(src1: torch.Tensor, src2: torch.Tensor, overlap_samples: int):
@@ -543,9 +569,37 @@ def __pad_sources__(sources: list[torch.Tensor], paddings):
     result = []
     for src, (lpad, rpad) in zip(sources, paddings):
         C = src.size(0)
-        nsrc = torch.cat((torch.zeros(C, lpad), src, torch.zeros(C, rpad)))
+        nsrc = torch.cat((torch.zeros(C, lpad), src, torch.zeros(C, rpad)), dim=-1)
         result.append(nsrc)
     return result
+
+
+def __reverberate__(src: torch.Tensor, rir: torch.Tensor, mix_info=None, keep_time=False):
+    """
+    Arguments
+    ---------
+        src: torch.Tensor
+        input of shape [1, T] or [C, T]
+
+        rir: torch.Tensor
+        room impulse response of shape [C, T]
+    """
+    assert src.ndim == 2 and rir.ndim == 2
+
+    # [Cout, 1, kW], i.e. Cin = 1
+    rir = rir.unsqueeze(1)
+
+    # [Cout, T]
+    if keep_time:
+        res = F.conv1d(src, rir.flip(-1), padding=rir.shape[-1], groups=src.size(0))
+        res = res[..., :-rir.shape[-1] - 1]
+    else:
+        res = F.conv1d(src, rir.flip(-1), groups=src.size(0))
+
+    if mix_info:
+        mix_info["rvb_shift_samples"] = rir.max(dim=-1)[-1]
+
+    return res
 
 
 def parse_noises(file, replacements={}):
