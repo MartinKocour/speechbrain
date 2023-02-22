@@ -6,11 +6,13 @@ Authors
     * Martin Kocour 2022
 """
 
-from speechbrain.processing.signal_processing import reverberate
 from speechbrain.utils.data_pipeline import DataPipeline
+from speechbrain.processing.signal_processing import reverberate
 
 import torch
 import torch.nn.functional as F
+from torch.fft import irfft, rfft
+
 import torchaudio
 import numpy as np
 import numbers
@@ -44,6 +46,7 @@ class DynamicMixingConfig:
     reverb: bool = False
     reverb_sources: bool = True
     reverb_prob: float = 1.0
+    reverb_keep_time: bool = False
     white_noise_add: bool = True
     white_noise_std: float = 1e-4  # should be close to 0
     sample_rate: int = 16000
@@ -109,7 +112,7 @@ class DynamicMixingDataset(torch.utils.data.Dataset):
     def __init__(
         self,
         spkr_files,
-        config,
+        config: DynamicMixingConfig,
         noise_flist=None,
         rir_flist=None,
         replacements={},
@@ -378,7 +381,7 @@ class DynamicMixingDataset(torch.utils.data.Dataset):
             else:
                 rir = rir[:1, :]
 
-            mixture = __reverberate__(mixture, rir, mix_info)
+            mixture = __reverberate__(mixture, rir, mix_info, keep_time=self.config.reverb_keep_time)
             if self.config.reverb_sources:
                 sources = [__reverberate__(x, rir) for x in sources]
 
@@ -578,26 +581,33 @@ def __reverberate__(src: torch.Tensor, rir: torch.Tensor, mix_info=None, keep_ti
     """
     Arguments
     ---------
-        src: torch.Tensor
-        input of shape [1, T] or [C, T]
+    src: torch.Tensor
+        input audio recording of shape [1, T] or [C, T]
 
-        rir: torch.Tensor
+    rir: torch.Tensor
         room impulse response of shape [C, T]
     """
     assert src.ndim == 2 and rir.ndim == 2
+    assert src.size(0) == rir.size(0)
 
     # [Cout, 1, kW], i.e. Cin = 1
     rir = rir.unsqueeze(1)
 
     # [Cout, T]
     if keep_time:
-        res = F.conv1d(src, rir.flip(-1), padding=rir.shape[-1], groups=src.size(0))
-        res = res[..., :-rir.shape[-1] - 1]
+        res = torch.stack(
+            [reverberate(src_ch, rir_ch) for src_ch, rir_ch in zip(src, rir)],
+            dim=0
+        )
     else:
-        res = F.conv1d(src, rir.flip(-1), groups=src.size(0))
+        # for loop is 2xfaster on CPU than multi-channel FFT
+        res = torch.stack(
+            [irfft(rfft(src_ch) * rfft(rir_ch, n=src.size(-1))) for src_ch, rir_ch in zip(src, rir)],
+            dim=0
+        )
 
     if mix_info:
-        mix_info["rvb_shift_samples"] = rir.max(dim=-1)[-1]
+        mix_info["rvb_shift_samples"] = min(rir.max(dim=-1)[-1])
 
     return res
 
