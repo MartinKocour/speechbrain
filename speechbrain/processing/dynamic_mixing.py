@@ -406,7 +406,7 @@ class DynamicMixingDataset(torch.utils.data.Dataset):
         if self.config.white_noise_add:
             mixture += torch.randn(mixture.shape) * self.config.white_noise_std
             sources = [
-                src + torch.randn(mixture.shape) * self.config.white_noise_std
+                src + torch.randn(src.shape) * self.config.white_noise_std
                 for src in sources
             ]
 
@@ -588,7 +588,8 @@ def __reverberate__(src: torch.Tensor, rir: torch.Tensor, mix_info=None, keep_ti
         room impulse response of shape [C, T]
     """
     assert src.ndim == 2 and rir.ndim == 2
-    assert src.size(0) == rir.size(0)
+    if src.size(0) < rir.size(0):
+        src = src.repeat(rir.size(0), 1)
 
     # [Cout, 1, kW], i.e. Cin = 1
     rir = rir.unsqueeze(1)
@@ -601,13 +602,12 @@ def __reverberate__(src: torch.Tensor, rir: torch.Tensor, mix_info=None, keep_ti
         )
     else:
         # for loop is 2xfaster on CPU than multi-channel FFT
-        res = torch.stack(
+        res = torch.cat(
             [irfft(rfft(src_ch) * rfft(rir_ch, n=src.size(-1))) for src_ch, rir_ch in zip(src, rir)],
             dim=0
         )
 
-    if mix_info:
-        mix_info["rvb_shift_samples"] = min(rir.max(dim=-1)[-1])
+    mix_info.rvb_shift_samples = min(rir.max(dim=-1)[-1])
 
     return res
 
