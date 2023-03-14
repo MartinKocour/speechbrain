@@ -59,6 +59,8 @@ class GlobalLayerNorm(nn.Module):
             if shape == 4:
                 self.weight = nn.Parameter(torch.ones(self.dim, 1, 1))
                 self.bias = nn.Parameter(torch.zeros(self.dim, 1, 1))
+            else:
+                raise RuntimeError(f"`shape = {shape}` is currently not supported!")
         else:
             self.register_parameter("weight", None)
             self.register_parameter("bias", None)
