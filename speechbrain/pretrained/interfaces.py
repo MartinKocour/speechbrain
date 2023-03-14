@@ -2071,47 +2071,28 @@ class SepformerSeparation(Pretrained):
 
     MODULES_NEEDED = ["encoder", "masknet", "decoder"]
 
-    def separate_batch(self, mix, ref_channel=None):
+    def separate_batch(self, mix):
         """Run source separation on batch of audio.
 
         Arguments
         ---------
-        mix : torch.tensor
-            The mixture of sources of shape [B, T] or [B, C, T],
-            where B = batch size
-            T = audio length
-            C = number of audio channels
-
-        ref_channel: int
-            Index of channel, which should be separated
-            This option is relevant only for multi-channel input.
+        mix : torch.Tensor
+            The mixture of sources.
 
         Returns
         -------
         tensor
-            Separated sources of shape [spks, B, T]
+            Separated sources
         """
-        assert mix.ndim == 2 or mix.ndim == 3
 
         # Separation
-        # [B, T]
         mix = mix.to(self.device)
-        # [B, C, N, T]
         mix_w = self.mods.encoder(mix)
-
-        if mix_w.size(1) == 1 or ref_channel is None:
-            # use 1st channel as reference for source separation
-            ref_channel = 0
-
-        # [spks, B, N, T]
         est_mask = self.mods.masknet(mix_w)
-        # [spks, B, N, T]
-        mix_w = torch.stack([mix_w[:, ref_channel, :, :]] * self.hparams.num_spks)
-        # [spks, B, N, T]
+        mix_w = torch.stack([mix_w] * self.hparams.num_spks)
         sep_h = mix_w * est_mask
 
         # Decoding
-        # [spks, B, T]
         est_source = torch.cat(
             [
                 self.mods.decoder(sep_h[i]).unsqueeze(-1)
@@ -2121,7 +2102,7 @@ class SepformerSeparation(Pretrained):
         )
 
         # T changed after conv1d in encoder, fix it here
-        T_origin = mix.size(-1)
+        T_origin = mix.size(1)
         T_est = est_source.size(1)
         if T_origin > T_est:
             est_source = F.pad(est_source, (0, 0, 0, T_origin - T_est))
@@ -2170,9 +2151,9 @@ class SepformerSeparation(Pretrained):
         )
         return est_sources
 
-    def forward(self, mix, ref_channel=None):
+    def forward(self, mix):
         """Runs separation on the input mix"""
-        return self.separate_batch(mix, ref_channel=ref_channel)
+        return self.separate_batch(mix)
 
 
 class SpectralMaskEnhancement(Pretrained):
