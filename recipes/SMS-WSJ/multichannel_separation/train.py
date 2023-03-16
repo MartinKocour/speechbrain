@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Recipe for training a neral speech separation on 
+Recipe for training a neral speech separation on
 """
 
 import sys
@@ -24,7 +24,7 @@ class Separation(sb.Brain):
         Forward computations from the mixture to separated source.
         """
         batch = batch.to(self.device)
-    
+
         mix, mix_lens = batch.mix_sig
 
         # Separation
@@ -51,7 +51,7 @@ class Separation(sb.Brain):
             est_source = est_source[:, :T_origin, :]
 
         return est_source
-    
+
     def compute_objectives(self, est_source, batch, stage=sb.Stage.TRAIN):
         """Computes the si-snr loss"""
         # Convert targets to tensor
@@ -62,7 +62,7 @@ class Separation(sb.Brain):
         ).to(self.device)
 
         return self.hparams.si_snr(targets, est_source)
-    
+
     def on_stage_end(self, stage, stage_loss, epoch):
         # Compute/store loss
         stage_stats = {"si-snr": stage_loss}
@@ -74,7 +74,9 @@ class Separation(sb.Brain):
             # update lr
             lr_scheduler = self.hparams.lr_scheduler
             if isinstance(lr_scheduler, schedulers.ReduceLROnPlateau):
-                current_lr, next_lr = lr_scheduler([self.optimizer], epoch, stage_loss)
+                current_lr, next_lr = lr_scheduler(
+                    [self.optimizer], epoch, stage_loss
+                )
                 schedulers.update_learning_rate(self.optimizer, next_lr)
             else:
                 # if we do not use the reducelronplateau, we do not change the lr
@@ -91,14 +93,14 @@ class Separation(sb.Brain):
 
         elif stage == sb.Stage.TEST:
             self.hparams.train_logger.log_stats(
-                stats_meta = {"Epoch loaded": self.hparams.epoch_counter.current},
+                stats_meta={"Epoch loaded": self.hparams.epoch_counter.current},
                 test_stats=stage_loss,
             )
 
 
 def dataio_prep(hparams):
     """Creates data processing pipeline"""
-    
+
     # 1. Define datasets
     train_data = sb.dataio.dataset.DynamicItemDataset.from_csv(
         csv_path=hparams["train_data"],
@@ -146,13 +148,13 @@ def dataio_prep(hparams):
 
     return train_data, valid_data, test_data
 
+
 if __name__ == "__main__":
 
     # Load hyperparameters file with command-line overrides
     hparams_file, run_opts, overrides = sb.parse_arguments(sys.argv[1:])
     with open(hparams_file) as fin:
         hparams = load_hyperpyyaml(fin, overrides)
-
 
     # Data preparation
     from smswsj_prepare import prepare_smswsj
@@ -163,7 +165,7 @@ if __name__ == "__main__":
             "datapath": hparams["data_folder"],
             "savepath": hparams["save_folder"],
             "skip_prep": hparams["skip_prep"],
-        }
+        },
     )
 
     # Create dataset objects
@@ -197,7 +199,6 @@ if __name__ == "__main__":
             train_loader_kwargs=hparams["train_dataloader_opts"],
             valid_loader_kwargs=hparams["valid_dataloader_opts"],
         )
-    
+
     # Eval
     separator.evaluate(test_data, min_key="si-snr")
-
