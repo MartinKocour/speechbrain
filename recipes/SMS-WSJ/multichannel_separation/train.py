@@ -98,6 +98,14 @@ class Separation(sb.Brain):
                 test_stats=stage_loss,
             )
 
+    def reset_layer_recursively(self, layer):
+        """Reinitializes the parameters of the neural networks"""
+        if hasattr(layer, "reset_parameters"):
+            layer.reset_parameters()
+        for child_layer in layer.modules():
+            if layer != child_layer:
+                self.reset_layer_recursively(child_layer)
+
 
 def dataio_prep(hparams):
     """Creates data processing pipeline"""

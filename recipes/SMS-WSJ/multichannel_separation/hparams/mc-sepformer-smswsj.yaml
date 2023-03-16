@@ -93,10 +93,18 @@ dataloader_opts:
 
 
 # Specifying the network
-Encoder: !new:speechbrain.lobes.models.dual_path.Encoder
+Encoder: !new:speechbrain.lobes.models.triple_path.Encoder
     kernel_size: !ref <kernel_size>
     out_channels: !ref <N_encoder_out>
 
+SBtfintra_channel: !new:speechbrain.lobes.models.dual_path.SBTransformerBlock
+    num_layers: 3
+    d_model: !ref <out_channels>
+    nhead: 8
+    d_ffn: 1024
+    dropout: 0
+    use_positional_encoding: True
+    norm_before: True
 
 SBtfintra: !new:speechbrain.lobes.models.dual_path.SBTransformerBlock
     num_layers: 8
@@ -116,19 +124,20 @@ SBtfinter: !new:speechbrain.lobes.models.dual_path.SBTransformerBlock
     use_positional_encoding: True
     norm_before: True
 
-MaskNet: !new:speechbrain.lobes.models.dual_path.Dual_Path_Model
+MaskNet: !new:speechbrain.lobes.models.triple_path.Tripple_Path_Model
     num_spks: !ref <num_spks>
     in_channels: !ref <N_encoder_out>
     out_channels: !ref <out_channels>
     num_layers: 2
     K: 250
-    intra_model: !ref <SBtfintra>
-    inter_model: !ref <SBtfinter>
+    intra_channel_model: !ref <SBtfintra_channel>
+    intra_chunk_model: !ref <SBtfintra>
+    inter_chunk_model: !ref <SBtfinter>
     norm: ln
     linear_layer_after_inter_intra: False
     skip_around_intra: True
 
-Decoder: !new:speechbrain.lobes.models.dual_path.Decoder
+Decoder: !new:speechbrain.lobes.models.triple_path.Decoder
     in_channels: !ref <N_encoder_out>
     out_channels: 1
     kernel_size: !ref <kernel_size>
