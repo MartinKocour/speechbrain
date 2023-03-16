@@ -94,7 +94,57 @@ class Separation(sb.Brain):
                 stats_meta = {"Epoch loaded": self.hparams.epoch_counter.current},
                 test_stats=stage_loss,
             )
+
+
+def dataio_prep(hparams):
+    """Creates data processing pipeline"""
     
+    # 1. Define datasets
+    train_data = sb.dataio.dataset.DynamicItemDataset.from_csv(
+        csv_path=hparams["train_data"],
+        replacements={"data_root": hparams["data_folder"]},
+    )
+
+    valid_data = sb.dataio.dataset.DynamicItemDataset.from_csv(
+        csv_path=hparams["valid_data"],
+        replacements={"data_root": hparams["data_folder"]},
+    )
+
+    test_data = sb.dataio.dataset.DynamicItemDataset.from_csv(
+        csv_path=hparams["test_data"],
+        replacements={"data_root": hparams["data_folder"]},
+    )
+
+    datasets = [train_data, valid_data, test_data]
+
+    # 2. Provide audio pipelines
+    @sb.utils.data_pipeline.takes("mix_wav")
+    @sb.utils.data_pipeline.provides("mix_sig")
+    def audio_pipeline_mix(mix_wav):
+        mix_sig, _ = torchaudio.load(mix_wav)
+        return mix_sig
+
+    @sb.utils.data_pipeline.takes("s1_wav")
+    @sb.utils.data_pipeline.provides("s1_sig")
+    def audio_pipeline_s1(s1_wav):
+        s1_sig, _ = torchaudio.load(s1_wav)
+        return s1_sig
+
+    @sb.utils.data_pipeline.takes("s2_wav")
+    @sb.utils.data_pipeline.provides("s2_sig")
+    def audio_pipeline_s2(s2_wav):
+        s2_sig, _ = torchaudio.load(s2_wav)
+        return s2_sig
+
+    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_mix)
+    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_s1)
+    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_s2)
+
+    sb.dataio.dataset.set_output_keys(
+        datasets, ["id", "mix_sig", "s1_sig", "s2_sig"]
+    )
+
+    return train_data, valid_data, test_data
 
 if __name__ == "__main__":
 
@@ -102,6 +152,27 @@ if __name__ == "__main__":
     hparams_file, run_opts, overrides = sb.parse_arguments(sys.argv[1:])
     with open(hparams_file) as fin:
         hparams = load_hyperpyyaml(fin, overrides)
+
+
+    # Data preparation
+    from smswsj_prepare import prepare_smswsj
+
+    run_on_main(
+        prepare_smswsj,
+        kwargs={
+            "datapath": hparams["data_folder"],
+            "savepath": hparams["save_folder"],
+            "skip_prep": hparams["skip_prep"],
+        }
+    )
+
+    # Create dataset objects
+    train_data, valid_data, test_data = dataio_prep(hparams)
+
+    # Load pretrained model if pretrained_separator is present in the yaml
+    if "pretrained_separator" in hparams:
+        run_on_main(hparams["pretrained_separator"].collect_files)
+        hparams["pretrained_separator"].load_collected()
 
     # Brain class initialization
     separator = Separation(
