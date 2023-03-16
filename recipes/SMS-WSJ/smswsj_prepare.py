@@ -12,6 +12,10 @@ Author
 import csv
 import os
 import torchaudio
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 def prepare_smswsj(datapath, savepath, skip_prep=False):
     """
@@ -22,6 +26,8 @@ def prepare_smswsj(datapath, savepath, skip_prep=False):
         datapath (str) : path for the wsj0-mix dataset.
         savepath (str) : path where we save the csv file.
     """
+    if skip_prep:
+        return
     _create_smswsj_csv(datapath, savepath)
 
 
@@ -33,26 +39,47 @@ def _create_smswsj_csv(datapath, savepath):
         "reverb1": "early",
         "reverb2": "tail",
     }
+
+    os.makedirs(savepath, exist_ok=True)
+
     for set_type in ["cv_dev93", "test_eval92", "train_si284"]:
-        mix_path = os.path.join(datapath, set_type, folder_names["mix"])
-        src_path = os.path.join(datapath, set_type, folder_names["src"])
-        noise_path = os.path.join(datapath, set_type, folder_names["noise"])
-        early_path = os.path.join(datapath, set_type, folder_names["reverb1"])
-        tail_path = os.path.join(datapath, set_type, folder_names["reverb2"])
+        logger.info(f"Preparing csv file for: {set_type}")
+
+        mix_path = os.path.join(datapath, folder_names["mix"], set_type)
+        src_path = os.path.join(datapath, folder_names["src"], set_type)
+        noise_path = os.path.join(datapath, folder_names["noise"], set_type)
+        early_path = os.path.join(datapath, folder_names["reverb1"], set_type)
+        tail_path = os.path.join(datapath, folder_names["reverb2"], set_type)
 
         files = os.listdir(mix_path)
-        mix_utts = map(lambda path: path.split(".")[0], files) # remove suffix
+        mix_utts = list(
+            map(lambda path: path.split(".")[0], files)
+        )  # remove suffix
 
         mix_fl_paths = [os.path.join(mix_path, fl + ".wav") for fl in mix_utts]
-        noise_fl_paths = [os.path.join(noise_path, fl + ".wav") for fl in mix_utts]
+        noise_fl_paths = [
+            os.path.join(noise_path, fl + ".wav") for fl in mix_utts
+        ]
 
-        src0_clean_fl_paths = [os.path.join(src_path, fl + "_0.wav") for fl in mix_utts]
-        src0_rvbearly_fl_paths = [os.path.join(early_path, fl + "_0.wav") for fl in mix_utts]
-        src0_rvblate_fl_paths = [os.path.join(tail_path, fl + "_0.wav") for fl in mix_utts]
+        src0_clean_fl_paths = [
+            os.path.join(src_path, fl + "_0.wav") for fl in mix_utts
+        ]
+        src0_rvbearly_fl_paths = [
+            os.path.join(early_path, fl + "_0.wav") for fl in mix_utts
+        ]
+        src0_rvblate_fl_paths = [
+            os.path.join(tail_path, fl + "_0.wav") for fl in mix_utts
+        ]
 
-        src1_clean_fl_paths = [os.path.join(src_path, fl + "_1.wav") for fl in mix_utts]
-        src1_rvbearly_fl_paths = [os.path.join(early_path, fl + "_1.wav") for fl in mix_utts]
-        src1_rvbtail_fl_paths = [os.path.join(tail_path, fl + "_1.wav") for fl in mix_utts]
+        src1_clean_fl_paths = [
+            os.path.join(src_path, fl + "_1.wav") for fl in mix_utts
+        ]
+        src1_rvbearly_fl_paths = [
+            os.path.join(early_path, fl + "_1.wav") for fl in mix_utts
+        ]
+        src1_rvbtail_fl_paths = [
+            os.path.join(tail_path, fl + "_1.wav") for fl in mix_utts
+        ]
 
         csv_columns = [
             "ID",
@@ -84,9 +111,13 @@ def _create_smswsj_csv(datapath, savepath):
         ]
 
         all_fl_paths = [
-            mix_fl_paths, 
-            src0_clean_fl_paths, src0_rvbearly_fl_paths, src0_rvblate_fl_paths,
-            src1_clean_fl_paths, src1_rvbearly_fl_paths, src1_rvbtail_fl_paths,
+            mix_fl_paths,
+            src0_clean_fl_paths,
+            src0_rvbearly_fl_paths,
+            src0_rvblate_fl_paths,
+            src1_clean_fl_paths,
+            src1_rvbearly_fl_paths,
+            src1_rvbtail_fl_paths,
             noise_fl_paths,
         ]
 
@@ -102,7 +133,9 @@ def _create_smswsj_csv(datapath, savepath):
                 meta_info = torchaudio.info(m)
                 row = {
                     "ID": i,
-                    "duration": round(meta_info.num_frames / meta_info.sample_rate, 3),
+                    "duration": round(
+                        meta_info.num_frames / meta_info.sample_rate, 3
+                    ),
                     "mix_wav": m,
                     "mix_wav_format": "wav",
                     "mix_wav_opts": None,
@@ -129,6 +162,3 @@ def _create_smswsj_csv(datapath, savepath):
                     "noise_wav_opts": None,
                 }
                 writer.writerow(row)
-
-
-
