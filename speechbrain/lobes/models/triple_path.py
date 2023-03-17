@@ -146,7 +146,7 @@ class Decoder(nn.ConvTranspose1d):
         return x
 
 
-class Tripple_Computation_Block(nn.Module):
+class Triple_Computation_Block(nn.Module):
     """Computation block for dual-path processing.
 
     Arguments
@@ -185,7 +185,7 @@ class Tripple_Computation_Block(nn.Module):
         skip_around_intra=True,
         linear_layer_after_inter_intra=True,
     ):
-        super(Tripple_Computation_Block, self).__init__()
+        super(Triple_Computation_Block, self).__init__()
 
         self.intra_channel_mdl = intra_channel_mdl
         self.intra_chunk_mdl = intra_chunk_mdl
@@ -316,7 +316,7 @@ class Tripple_Computation_Block(nn.Module):
         return out
 
 
-class Tripple_Path_Model(nn.Module):
+class Triple_Path_Model(nn.Module):
     """The dual path model which is the basis for dualpathrnn, sepformer, dptnet.
 
     Arguments
@@ -373,7 +373,7 @@ class Tripple_Path_Model(nn.Module):
         use_global_pos_enc=False,
         max_length=20000,
     ):
-        super(Tripple_Path_Model, self).__init__()
+        super(Triple_Path_Model, self).__init__()
         self.K = K
         self.num_spks = num_spks
         self.num_layers = num_layers
@@ -388,7 +388,7 @@ class Tripple_Path_Model(nn.Module):
         for i in range(num_layers):
             self.tripple_mdl.append(
                 copy.deepcopy(
-                    Tripple_Computation_Block(
+                    Triple_Computation_Block(
                         intra_channel_model,
                         intra_chunk_model,
                         inter_chunk_model,
@@ -435,7 +435,7 @@ class Tripple_Path_Model(nn.Module):
 
         # before each line we indicate the shape after executing the line
 
-        assert x.ndim == 4, "Expected 4D (batched) input to Tripple_Path_Model, but got input of size: {}".format(x.shape)
+        assert x.ndim == 4, "Expected 4D (batched) input to Triple_Path_Model, but got input of size: {}".format(x.shape)
 
         B, C, N, L = x.shape
 
@@ -704,7 +704,7 @@ class MultiChannelSepformerWrapper(nn.Module):
             norm_before=inter_norm_before,
         )
 
-        self.masknet = Tripple_Path_Model(
+        self.masknet = Triple_Path_Model(
             in_channels=encoder_out_nchannels,
             out_channels=encoder_out_nchannels,
             intra_channel_model=intra_channel_mdl,

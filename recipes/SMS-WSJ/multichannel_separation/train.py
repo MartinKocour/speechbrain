@@ -15,6 +15,8 @@ from speechbrain.nnet import schedulers
 from speechbrain.utils.distributed import run_on_main
 from hyperpyyaml import load_hyperpyyaml
 
+from safe_gpu import safe_gpu
+
 logger = logging.getLogger(__name__)
 
 
@@ -24,6 +26,7 @@ class Separation(sb.Brain):
         """
         Forward computations from the mixture to separated source.
         """
+        import pdb; pdb.set_trace()
         batch = batch.to(self.device)
 
         mix, mix_lens = batch.mix_sig
@@ -133,18 +136,37 @@ def dataio_prep(hparams):
     @sb.utils.data_pipeline.provides("mix_sig")
     def audio_pipeline_mix(mix_wav):
         mix_sig, _ = torchaudio.load(mix_wav)
+        if "mix_microphones" in hparams:
+            microphones = hparams["mix_microphones"]
+            mix_sig = mix_sig[microphones]
         return mix_sig
 
-    @sb.utils.data_pipeline.takes("s1_wav")
+    @sb.utils.data_pipeline.takes("s1_clean_wav", "s1_rvbearly_wav", "s1_rvbtail_wav")
     @sb.utils.data_pipeline.provides("s1_sig")
-    def audio_pipeline_s1(s1_wav):
-        s1_sig, _ = torchaudio.load(s1_wav)
+    def audio_pipeline_s1(s1_clean_wav, s1_early_wav, s1_tail_wav):
+        if hparams["reverb_source"]:
+            s1_early_sig, _ = torchaudio.load(s1_early_wav)
+            s1_tail_sig, _ = torchaudio.load(s1_tail_wav)
+            s1_sig = s1_early_sig + s1_tail_sig
+        else:
+            s1_sig, _ = torchaudio.load(s1_clean_wav)
+
+        if "ref_microphone" in hparams:
+            s1_sig = s1_sig[hparams["ref_microphone"]]
         return s1_sig
 
-    @sb.utils.data_pipeline.takes("s2_wav")
+    @sb.utils.data_pipeline.takes("s2_clean_wav", "s2_rvbearly_wav", "s2_rvbtail_wav")
     @sb.utils.data_pipeline.provides("s2_sig")
-    def audio_pipeline_s2(s2_wav):
-        s2_sig, _ = torchaudio.load(s2_wav)
+    def audio_pipeline_s2(s2_clean_wav, s2_early_wav, s2_tail_wav):
+        if hparams["reverb_source"]:
+            s2_early_sig, _ = torchaudio.load(s2_early_wav)
+            s2_tail_sig, _ = torchaudio.load(s2_tail_wav)
+            s2_sig = s2_early_sig + s2_tail_sig
+        else:
+            s2_sig, _ = torchaudio.load(s2_clean_wav)
+
+        if "ref_microphone" in hparams:
+            s2_sig = s2_sig[hparams["ref_microphone"]]
         return s2_sig
 
     sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_mix)
@@ -164,6 +186,14 @@ if __name__ == "__main__":
     hparams_file, run_opts, overrides = sb.parse_arguments(sys.argv[1:])
     with open(hparams_file) as fin:
         hparams = load_hyperpyyaml(fin, overrides)
+
+    if "cuda" in run_opts["device"]:
+        # acquire GPU
+        gpu_owner = safe_gpu.GPUOwner()
+        gpu_nb = gpu_owner.devices_taken[0]
+        run_opts["device"] = "cuda:" + str(gpu_nb)
+        print(run_opts["device"])
+        logger.info("Acquired Device: " + run_opts["device"])
 
     # Data preparation
     from smswsj_prepare import prepare_smswsj
@@ -205,8 +235,8 @@ if __name__ == "__main__":
             separator.hparams.epoch_counter,
             train_data,
             valid_data,
-            train_loader_kwargs=hparams["train_dataloader_opts"],
-            valid_loader_kwargs=hparams["valid_dataloader_opts"],
+            train_loader_kwargs=hparams["dataloader_opts"],
+            valid_loader_kwargs=hparams["dataloader_opts"],
         )
 
     # Eval

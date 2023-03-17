@@ -14,6 +14,8 @@ import os
 import torchaudio
 import logging
 
+from tqdm import tqdm
+
 logger = logging.getLogger(__name__)
 
 
@@ -126,9 +128,9 @@ def _create_smswsj_csv(datapath, savepath):
         ) as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
             writer.writeheader()
-            for i, (m, s1_c, s1_e, s1_t, s2_c, s2_e, s2_t, n) in enumerate(
+            for i, (m, s1_c, s1_e, s1_t, s2_c, s2_e, s2_t, n) in tqdm(enumerate(
                 zip(*all_fl_paths)
-            ):
+            ), desc=f"Processing '{set_type}'", total=len(mix_utts)):
 
                 meta_info = torchaudio.info(m)
                 row = {
