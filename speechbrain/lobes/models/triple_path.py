@@ -669,9 +669,10 @@ class MultiChannelSepformerWrapper(nn.Module):
         inter_use_positional=True,
         intra_norm_before=True,
         inter_norm_before=True,
+        ref_microphone=0,
     ):
 
-        super(FlexformerWrapper, self).__init__()
+        super(MultiChannelSepformerWrapper, self).__init__()
         self.encoder = Encoder(
             kernel_size=encoder_kernel_size,
             out_channels=encoder_out_nchannels,
@@ -725,6 +726,7 @@ class MultiChannelSepformerWrapper(nn.Module):
             bias=False,
         )
         self.num_spks = masknet_numspks
+        self.ref_microphone = ref_microphone
 
         # reinitialize the parameters
         for module in [self.encoder, self.masknet, self.decoder]:
@@ -744,6 +746,8 @@ class MultiChannelSepformerWrapper(nn.Module):
         mix_w = self.encoder(mix)
         # [spks, B, N, L]
         est_mask = self.masknet(mix_w)
+        # [spks, B, N, L]
+        mix_w = mix_w[:, self.ref_microphone, ...]
         # [spks, B, N, L]
         mix_w = torch.stack([mix_w] * self.num_spks)
         # [spks, B, N, L]

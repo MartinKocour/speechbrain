@@ -26,7 +26,6 @@ class Separation(sb.Brain):
         """
         Forward computations from the mixture to separated source.
         """
-        import pdb; pdb.set_trace()
         batch = batch.to(self.device)
 
         mix, mix_lens = batch.mix_sig
@@ -34,6 +33,7 @@ class Separation(sb.Brain):
         # Separation
         mix_w = self.modules.encoder(mix)
         est_mask = self.modules.masknet(mix_w)
+        mix_w = mix_w[:, self.hparams.ref_microphone, ...]
         mix_w = torch.stack([mix_w] * self.hparams.num_spks)
         sep_h = mix_w * est_mask
 
@@ -194,6 +194,13 @@ if __name__ == "__main__":
         run_opts["device"] = "cuda:" + str(gpu_nb)
         print(run_opts["device"])
         logger.info("Acquired Device: " + run_opts["device"])
+
+    # Create experiment directory
+    sb.create_experiment_directory(
+        experiment_directory=hparams["output_folder"],
+        hyperparams_to_save=hparams_file,
+        overrides=overrides,
+    )
 
     # Data preparation
     from smswsj_prepare import prepare_smswsj
