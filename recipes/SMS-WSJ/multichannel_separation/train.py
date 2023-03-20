@@ -5,6 +5,7 @@ Recipe for training a neral speech separation on
 
 import sys
 import logging
+import random
 
 import torch
 import torchaudio
@@ -27,16 +28,13 @@ class Separation(sb.Brain):
         Forward computations from the mixture to separated source.
         """
         batch = batch.to(self.device)
-
         mix, mix_lens = batch.mix_sig
-
         # Separation
         mix_w = self.modules.encoder(mix)
         est_mask = self.modules.masknet(mix_w)
         mix_w = mix_w[:, self.hparams.ref_microphone, ...]
         mix_w = torch.stack([mix_w] * self.hparams.num_spks)
         sep_h = mix_w * est_mask
-
         # Decoding
         est_source = torch.cat(
             [
@@ -45,9 +43,8 @@ class Separation(sb.Brain):
             ],
             dim=-1,
         )
-
         # T changed after conv1d in encoder, fit it here
-        T_origin = mix.size(1)
+        T_origin = mix.size(-1)
         T_est = est_source.size(1)
         if T_origin > T_est:
             est_source = F.pad(est_source, (0, 0, 0, T_origin - T_est))
@@ -60,12 +57,10 @@ class Separation(sb.Brain):
         """Computes the si-snr loss"""
         # Convert targets to tensor
         targets = [batch.s1_sig, batch.s2_sig]
-        targets = torch.cat(
-            [targets[i][0].unsqueeze(-1) for i in range(self.hparams.num_spks)],
-            dim=-1,
-        ).to(self.device)
+        targets = torch.cat([t[0].unsqueeze(-1) for t in targets], dim=-1).to(self.device)
 
-        return self.hparams.si_snr(targets, est_source)
+        loss, _ = self.hparams.pit_si_snr(targets, est_source)
+        return loss
 
     def on_stage_end(self, stage, stage_loss, epoch):
         # Compute/store loss
@@ -135,21 +130,26 @@ def dataio_prep(hparams):
     @sb.utils.data_pipeline.takes("mix_wav")
     @sb.utils.data_pipeline.provides("mix_sig")
     def audio_pipeline_mix(mix_wav):
-        mix_sig, _ = torchaudio.load(mix_wav)
+        mix_sig, fs = torchaudio.load(mix_wav)
+        assert fs == hparams["sample_rate"]
+
         if "mix_microphones" in hparams:
             microphones = hparams["mix_microphones"]
             mix_sig = mix_sig[microphones]
+
         return mix_sig
 
     @sb.utils.data_pipeline.takes("s1_clean_wav", "s1_rvbearly_wav", "s1_rvbtail_wav")
     @sb.utils.data_pipeline.provides("s1_sig")
     def audio_pipeline_s1(s1_clean_wav, s1_early_wav, s1_tail_wav):
         if hparams["reverb_source"]:
-            s1_early_sig, _ = torchaudio.load(s1_early_wav)
+            s1_early_sig, fs = torchaudio.load(s1_early_wav)
             s1_tail_sig, _ = torchaudio.load(s1_tail_wav)
             s1_sig = s1_early_sig + s1_tail_sig
         else:
-            s1_sig, _ = torchaudio.load(s1_clean_wav)
+            s1_sig, fs = torchaudio.load(s1_clean_wav)
+
+        assert fs == hparams["sample_rate"]
 
         if "ref_microphone" in hparams:
             s1_sig = s1_sig[hparams["ref_microphone"]]
@@ -159,19 +159,51 @@ def dataio_prep(hparams):
     @sb.utils.data_pipeline.provides("s2_sig")
     def audio_pipeline_s2(s2_clean_wav, s2_early_wav, s2_tail_wav):
         if hparams["reverb_source"]:
-            s2_early_sig, _ = torchaudio.load(s2_early_wav)
+            s2_early_sig, fs = torchaudio.load(s2_early_wav)
             s2_tail_sig, _ = torchaudio.load(s2_tail_wav)
             s2_sig = s2_early_sig + s2_tail_sig
         else:
-            s2_sig, _ = torchaudio.load(s2_clean_wav)
+            s2_sig, fs = torchaudio.load(s2_clean_wav)
+
+        assert fs == hparams["sample_rate"]
 
         if "ref_microphone" in hparams:
             s2_sig = s2_sig[hparams["ref_microphone"]]
         return s2_sig
 
+    @sb.utils.data_pipeline.takes("mix_sig", "s1_sig", "s2_sig")
+    @sb.utils.data_pipeline.provides("mix_sig", "s1_sig", "s2_sig")
+    def cut_audio_pipeline(mix_sig, s1_sig, s2_sig):
+        if s1_sig.ndim == 1:
+            tmp = torch.cat([mix_sig, s1_sig.unsqueeze(0), s2_sig.unsqueeze(0)], dim=0)
+        else:
+            tmp = torch.cat([mix_sig, s1_sig, s2_sig], dim=0)
+
+        # tmp, gap = hparams["MaskNet"]._Segmentation(tmp.unsqueeze(0), chunk_length)
+        # tmp = tmp.squeeze(0)
+        # chunk_idx = random.randint(0, tmp.size(-1) - 1)
+        # tmp = tmp[..., chunk_idx]
+        chunk_length = random.randint(hparams["sample_rate"], hparams["training_signal_len"])
+        assert chunk_length > 0
+
+        offset = random.randint(0, tmp.size(-1))
+        tmp = tmp[..., offset:offset + chunk_length]
+
+        if s1_sig.ndim == 1:
+            s1_sig = tmp[mix_sig.size(0)]
+            s2_sig = tmp[-1]
+        else:
+            s1_sig = tmp[mix_sig.size(0):s1_sig.size(0)]
+            s2_sig = tmp[-s2_sig.size(0):]
+
+        mix_sig = tmp[:mix_sig.size(0)]
+        return mix_sig, s1_sig, s2_sig
+
     sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_mix)
     sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_s1)
     sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_s2)
+    if hparams["limit_training_signal_len"]:
+        train_data.add_dynamic_item(cut_audio_pipeline)
 
     sb.dataio.dataset.set_output_keys(
         datasets, ["id", "mix_sig", "s1_sig", "s2_sig"]
@@ -192,7 +224,7 @@ if __name__ == "__main__":
         gpu_owner = safe_gpu.GPUOwner()
         gpu_nb = gpu_owner.devices_taken[0]
         run_opts["device"] = "cuda:" + str(gpu_nb)
-        print(run_opts["device"])
+        run_opts["device"] = "cuda"
         logger.info("Acquired Device: " + run_opts["device"])
 
     # Create experiment directory

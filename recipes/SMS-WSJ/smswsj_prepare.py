@@ -28,7 +28,7 @@ def prepare_smswsj(datapath, savepath, skip_prep=False):
         datapath (str) : path for the wsj0-mix dataset.
         savepath (str) : path where we save the csv file.
     """
-    if skip_prep:
+    if skip_prep and os.path.exists(os.path.join(savepath, "smswsj_train_si284.csv")):
         return
     _create_smswsj_csv(datapath, savepath)
 
