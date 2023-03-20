@@ -186,7 +186,7 @@ def dataio_prep(hparams):
         chunk_length = random.randint(hparams["sample_rate"], hparams["training_signal_len"])
         assert chunk_length > 0
 
-        offset = random.randint(0, tmp.size(-1))
+        offset = random.randint(0, max(tmp.size(-1) - chunk_length, 0))
         tmp = tmp[..., offset:offset + chunk_length]
 
         if s1_sig.ndim == 1:
