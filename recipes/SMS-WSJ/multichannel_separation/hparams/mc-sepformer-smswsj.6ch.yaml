@@ -21,7 +21,7 @@ data_folder: !PLACEHOLDER
 # you need to convert the original wsj0 to 8k
 # you can do this conversion with the script ../meta/preprocess_dynamic_mixing.py
 
-experiment_name: mc-sepformer.small
+experiment_name: mc-sepformer.6ch
 output_folder: !ref results/<experiment_name>/<seed>
 train_log: !ref <output_folder>/train_log.txt
 save_folder: !ref <output_folder>/save
@@ -54,7 +54,7 @@ limit_training_signal_len: true
 training_signal_len: 32000
 ref_microphone: 0  # reference signal is 0th channel
 # mix_microphones: [[0,3], [1,4], [2,5]]
-mix_microphones: [0,3]
+mix_microphones: [0,1,2,3,4,5]
 
 # Parameters for data augmentation
 reverb_source: True
@@ -103,25 +103,25 @@ SBtfintra_channel: !new:speechbrain.lobes.models.dual_path.SBTransformerBlock
     num_layers: 3
     d_model: !ref <out_channels>
     nhead: 8
-    d_ffn: 512
+    d_ffn: 1024
     dropout: 0
     use_positional_encoding: True
     norm_before: True
 
 SBtfintra: !new:speechbrain.lobes.models.dual_path.SBTransformerBlock
-    num_layers: 3
+    num_layers: 8
     d_model: !ref <out_channels>
     nhead: 8
-    d_ffn: 512
+    d_ffn: 1024
     dropout: 0
     use_positional_encoding: True
     norm_before: True
 
 SBtfinter: !new:speechbrain.lobes.models.dual_path.SBTransformerBlock
-    num_layers: 3
+    num_layers: 8
     d_model: !ref <out_channels>
     nhead: 8
-    d_ffn: 512
+    d_ffn: 1024
     dropout: 0
     use_positional_encoding: True
     norm_before: True
