@@ -521,9 +521,14 @@ class Triple_Path_Model(nn.Module):
             x = self.tripple_mdl[i](x)
         x = self.prelu(x)
 
-        # [B, N, K, S]
         # aggregate over audio channels
+        B, C, N, K, S = x.shape
+        # [BKS, C, N]
+        x = x.permute(0, 3, 4, 1, 2).contiguous().view(B * K * S, C, N)
+        # [BKS, N]
         x = self.mic_aggregation(x)
+        # [B, N, K, S]
+        x = x.view(B, K, S, N).permute(0, 3, 1, 2)
 
         # [B, N*spks, K, S]
         x = self.conv2d(x)
