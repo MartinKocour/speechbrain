@@ -23,6 +23,65 @@ logger = logging.getLogger(__name__)
 
 # Define training procedure
 class Separation(sb.Brain):
+    def fit_batch(self, batch):
+        should_step = self.step % self.grad_accumulation_factor == 0
+        # Managing automatic mixed precision
+        if self.auto_mix_prec:
+            with torch.cuda.amp.autocast():
+                outputs = self.compute_forward(batch, sb.Stage.TRAIN)
+                loss = self.compute_objectives(outputs, batch, sb.Stage.TRAIN)
+
+            if self.check_loss(loss):
+                with self.no_sync(not should_step):
+                    self.scaler.scale(
+                        loss / self.grad_accumulation_factor
+                    ).backward()
+                if should_step:
+                    self.scaler.unscale_(self.optimizer)
+                    if self.check_gradients(loss):
+                        self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                    self.zero_grad()
+                    self.optimizer_step += 1
+        else:
+            outputs = self.compute_forward(batch, sb.Stage.TRAIN)
+            loss = self.compute_objectives(outputs, batch, sb.Stage.TRAIN)
+
+            if self.check_loss(loss):
+                with self.no_sync(not should_step):
+                    (loss / self.grad_accumulation_factor).backward()
+                if should_step:
+                    if self.check_gradients(loss):
+                        self.optimizer.step()
+                    self.zero_grad()
+                    self.optimizer_step += 1
+
+        self.on_fit_batch_end(batch, outputs, loss, should_step)
+        return loss.detach().cpu()
+
+    def check_loss(self, loss):
+        is_valid = loss < self.hparams.loss_upper_lim and loss > self.hparams.loss_threshold
+        if not is_valid:
+            self.nonfinite_count += 1
+            # we have good model, we should stop with the training
+            # let's stop after `nonfinite_patience` consecutive steps
+            if hasattr(self, "early_stop") and not self.early_stop:
+                self.nonfinite_count = 1
+                self.early_stop = True
+
+            if self.nonfinite_count > self.nonfinite_patience:
+                # last `nonfinite_patience` steps were not okay -> stop
+                raise ValueError(
+                    "Loss is not finite and patience is exhausted. "
+                    "To debug, wrap `fit()` with "
+                    "autograd's `detect_anomaly()`, e.g.\n\nwith "
+                    "torch.autograd.detect_anomaly():\n\tbrain.fit(...)"
+                )
+        else:
+            self.early_stop = False
+
+        return is_valid
+
     def compute_forward(self, batch, stage):
         """
         Forward computations from the mixture to separated source.
@@ -62,23 +121,14 @@ class Separation(sb.Brain):
         loss, _ = self.hparams.pit_si_snr(targets, est_source)
 
         if stage == sb.Stage.TRAIN:
-            # SI-SNR may return inf if est_src and target are equal
+            # SI-SNR is `inf` if `est_src`` and `target` are similar
             loss_to_keep = loss[loss > self.hparams.loss_threshold]
             if loss_to_keep.nelement() == 0:
-                # we have good model, we should stop with the training
-                # let's stop if we found `self.nonfinite_patience` consecutive batch with very good loss
-                if hasattr(self, "early_stop") and not self.early_stop:
-                    self.nonfinite_count = 0
-                    self.early_stop = True
-
-                # check_gradients() called from self.fit_batch, will take care about the stopping
-                # see `Brain.check_gradients` for details
-                return -torch.inf
+                return loss.mean()
             else:
-                self.early_stop = False
+                return loss_to_keep.mean()
 
-        loss = loss.mean()
-        return loss
+        return loss.mean()
 
     def on_stage_end(self, stage, stage_loss, epoch):
         # Compute/store loss
