@@ -14,6 +14,7 @@ import torch.nn.functional as F
 import copy
 from speechbrain.nnet.linear import Linear
 from speechbrain.lobes.models.transformer.Transformer import PositionalEncoding
+from speechbrain.nnet.attention import MultiheadAttention
 
 from speechbrain.lobes.models.dual_path import (
     select_norm,
@@ -316,6 +317,53 @@ class Triple_Computation_Block(nn.Module):
         return out
 
 
+class CrossChannelAttentionLayer(nn.Module):
+    """Aggreagation block for audio channel processing"""
+
+    def __init__(
+        self,
+        d_model,
+        nhead,
+        ref_audio_channel = None,
+        dropout=0.1
+    ):
+        """
+        Arguments
+        ---------
+        d_model: int
+        nhead: int
+        ref_audio_channel: Optional[int]
+            query in MHA
+            if none, query is same as input key
+        dropout: float
+        """
+        super(nn.Module, self).__init__()
+        self.ref_audio_channel = ref_audio_channel
+        self.attn = MultiheadAttention(
+            nhead,
+            d_model,
+            dropout=dropout,
+        )
+
+    def forward(self, x: torch.Tensor):
+        """
+        Arguments
+        ---------
+        x: torch.Tensor
+            Input tensor of size [B, C, N, K, S]
+        """
+        # [B, K, S, C, N]
+        x = x.permute(0, 3, 4, 1, 2)
+
+        query = x
+        if self.ref_audio_channel:
+            query = x[..., self.ref_audio_channel, :]
+
+        # [B, K, S, C, N]
+        x = self.attn(query, x, x, return_attn_weights=False)
+        return x.permute(0, 3, 4, 1, 2)
+
+
 class Triple_Path_Model(nn.Module):
     """The dual path model which is the basis for dualpathrnn, sepformer, dptnet.
 
@@ -345,6 +393,10 @@ class Triple_Path_Model(nn.Module):
         Global positional encodings.
     max_length : int
         Maximum sequence length.
+    mic_aggregation : Optional[torch.nn.module]
+        model to aggegate input microphones (audio channels)
+        e.g. cross-channel attention
+        If `None` torch.mean is used.
 
     Example
     ---------
@@ -372,6 +424,7 @@ class Triple_Path_Model(nn.Module):
         linear_layer_after_inter_intra=True,
         use_global_pos_enc=False,
         max_length=20000,
+        mic_aggregation=None,
     ):
         super(Triple_Path_Model, self).__init__()
         self.K = K
@@ -413,6 +466,9 @@ class Triple_Path_Model(nn.Module):
         self.output_gate = nn.Sequential(
             nn.Conv1d(out_channels, out_channels, 1), nn.Sigmoid()
         )
+        if mic_aggregation is None:
+            mic_aggregation = lambda x: torch.mean(x, dim=1)
+        self.mic_aggregation = mic_aggregation
 
     def forward(self, x: torch.Tensor):
         """Returns the output tensor.
@@ -466,8 +522,7 @@ class Triple_Path_Model(nn.Module):
 
         # [B, N, K, S]
         # aggregate over audio channels
-        # TODO: replace mean with something trainable, e.g. MHA
-        x = x.mean(dim=1)
+        x = self.mic_aggregation(x)
 
         # [B, N*spks, K, S]
         x = self.conv2d(x)
