@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Recipe for training a neral speech separation on
+Recipe for training a neral speech separation on SMS-WSJ
 """
 
 import sys

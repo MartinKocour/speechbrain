@@ -73,7 +73,7 @@ wavedrop: !new:speechbrain.lobes.augment.TimeDomainSpecAugment
 
 # loss thresholding -- this thresholds the training loss
 threshold_byloss: True
-threshold: -30
+loss_threshold: -30
 
 # Encoder parameters
 N_encoder_out: 256
