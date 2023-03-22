@@ -352,17 +352,25 @@ class CrossChannelAttentionLayer(nn.Module):
         ---------
         x: torch.Tensor
             Input tensor of size [B, C, N, K, S]
+
+        Returns
+        -------
+        out: torch.Tensor
+            Tensor of shape [B, C, N, K, S]
+            or [B, N, K, S] if `ref_audio_channel` != None
         """
-        # [B, K, S, C, N]
-        x = x.permute(0, 3, 4, 1, 2)
+        B, C, N, K, S = x.shape
+        # [BKS, C, N]
+        x = x.permute(0, 3, 4, 1, 2).contiguous().view(B * K * S, C, N)
 
         query = x
-        if self.ref_audio_channel:
-            query = x[..., self.ref_audio_channel, :]
+        if self.ref_audio_channel is not None:
+            query = x[:, self.ref_audio_channel, :].unsqueeze(1)
 
-        # [B, K, S, C, N]
+        # [BKS, C, N]
         x = self.attn(query, x, x, return_attn_weights=False)
-        return x.permute(0, 3, 4, 1, 2)
+        # return orig shape, i.e. [B, C, N, K, S] or [B, N, K, S]
+        return x.contiguous().view(B, K, S, -1, N).permute(0, 3, 4, 1, 2).squeeze(1)
 
 
 class Triple_Path_Model(nn.Module):
@@ -522,13 +530,8 @@ class Triple_Path_Model(nn.Module):
         x = self.prelu(x)
 
         # aggregate over audio channels
-        B, C, N, K, S = x.shape
-        # [BKS, C, N]
-        x = x.permute(0, 3, 4, 1, 2).contiguous().view(B * K * S, C, N)
-        # [BKS, N]
-        x = self.mic_aggregation(x)
         # [B, N, K, S]
-        x = x.view(B, K, S, N).permute(0, 3, 1, 2)
+        x = self.mic_aggregation(x)
 
         # [B, N*spks, K, S]
         x = self.conv2d(x)
