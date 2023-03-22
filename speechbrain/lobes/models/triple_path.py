@@ -325,7 +325,7 @@ class CrossChannelAttentionLayer(nn.Module):
         self,
         d_model,
         nhead,
-        ref_audio_channel = None,
+        ref_audio_channel=None,
         dropout=0.1
     ):
         """
@@ -338,7 +338,7 @@ class CrossChannelAttentionLayer(nn.Module):
             if none, query is same as input key
         dropout: float
         """
-        super(nn.Module, self).__init__()
+        super(CrossChannelAttentionLayer, self).__init__()
         self.ref_audio_channel = ref_audio_channel
         self.attn = MultiheadAttention(
             nhead,
