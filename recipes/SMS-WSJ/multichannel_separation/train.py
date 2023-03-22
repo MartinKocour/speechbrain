@@ -60,6 +60,24 @@ class Separation(sb.Brain):
         targets = torch.cat([t[0].unsqueeze(-1) for t in targets], dim=-1).to(self.device)
 
         loss, _ = self.hparams.pit_si_snr(targets, est_source)
+
+        if stage == sb.Stage.TRAIN:
+            # SI-SNR may return inf if est_src and target are equal
+            loss_to_keep = loss[loss > self.hparams.loss_threshold]
+            if loss_to_keep.nelement() == 0:
+                # we have good model, we should stop with the training
+                # let's stop if we found `self.nonfinite_patience` consecutive batch with very good loss
+                if hasattr(self, "early_stop") and not self.early_stop:
+                    self.nonfinite_count = 0
+                    self.early_stop = True
+
+                # check_gradients() called from self.fit_batch, will take care about the stopping
+                # see `Brain.check_gradients` for details
+                return -torch.inf
+            else:
+                self.early_stop = False
+
+        loss = loss.mean()
         return loss
 
     def on_stage_end(self, stage, stage_loss, epoch):
@@ -241,7 +259,7 @@ if __name__ == "__main__":
         prepare_smswsj,
         kwargs={
             "datapath": hparams["data_folder"],
-            "savepath": hparams["save_folder"],
+            "savepath": hparams["data_local_folder"],
             "skip_prep": hparams["skip_prep"],
         },
     )

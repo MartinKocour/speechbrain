@@ -12,22 +12,17 @@ __set_seed: !apply:torch.manual_seed [!ref <seed>]
 
 # Data params
 
-# e.g. '/yourpath/wsj0-mix/2speakers'
-# end with 2speakers for wsj0-2mix or 3speakers for wsj0-3mix
+# e.g. '/yourpath/sms_wsj/data'
 data_folder: !PLACEHOLDER
-
-# the path for wsj0/si_tr_s/ folder -- only needed if dynamic mixing is used
-# e.g. /yourpath/wsj0-processed/si_tr_s/
-# you need to convert the original wsj0 to 8k
-# you can do this conversion with the script ../meta/preprocess_dynamic_mixing.py
 
 experiment_name: mc-sepformer
 output_folder: !ref results/<experiment_name>/<seed>
 train_log: !ref <output_folder>/train_log.txt
 save_folder: !ref <output_folder>/save
-train_data: !ref <save_folder>/smswsj_train_si284.csv
-valid_data: !ref <save_folder>/smswsj_cv_dev93.csv
-test_data: !ref <save_folder>/smswsj_test_eval92.csv
+data_local_folder: data
+train_data: !ref <data_local_folder>/smswsj_train_si284.csv
+valid_data: !ref <data_local_folder>/smswsj_cv_dev93.csv
+test_data: !ref <data_local_folder>/smswsj_test_eval92.csv
 skip_prep: False
 
 # Experiment params
