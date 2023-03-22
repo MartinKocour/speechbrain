@@ -60,9 +60,15 @@ class Separation(sb.Brain):
         return loss.detach().cpu()
 
     def check_loss(self, loss):
-        is_valid = loss < self.hparams.loss_upper_lim and loss > self.hparams.loss_threshold
-        if not is_valid:
+        is_finite = torch.isfinite(loss) and loss < self.hparams.loss_upper_lim and loss > self.hparams.loss_threshold
+        if not is_finite:
             self.nonfinite_count += 1
+
+            logger.warn(f"Loss is {loss}.")
+            for p in self.modules.parameters():
+                if not torch.isfinite(p).all():
+                    logger.warn("Parameter is not finite: " + str(p))
+
             # we have good model, we should stop with the training
             # let's stop after `nonfinite_patience` consecutive steps
             if hasattr(self, "early_stop") and not self.early_stop:
@@ -80,7 +86,7 @@ class Separation(sb.Brain):
         else:
             self.early_stop = False
 
-        return is_valid
+        return is_finite
 
     def compute_forward(self, batch, stage):
         """
