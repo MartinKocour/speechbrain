@@ -15,7 +15,7 @@ __set_seed: !apply:torch.manual_seed [!ref <seed>]
 # e.g. '/yourpath/sms_wsj/data'
 data_folder: !PLACEHOLDER
 
-experiment_name: mc-sepformer
+experiment_name: mc-cca-sepformer
 output_folder: !ref results/<experiment_name>/<seed>
 train_log: !ref <output_folder>/train_log.txt
 save_folder: !ref <output_folder>/save

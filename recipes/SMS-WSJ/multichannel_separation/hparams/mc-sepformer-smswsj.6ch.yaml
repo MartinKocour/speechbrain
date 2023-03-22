@@ -25,9 +25,10 @@ experiment_name: mc-sepformer.6ch
 output_folder: !ref results/<experiment_name>/<seed>
 train_log: !ref <output_folder>/train_log.txt
 save_folder: !ref <output_folder>/save
-train_data: !ref <save_folder>/smswsj_train_si284.csv
-valid_data: !ref <save_folder>/smswsj_cv_dev93.csv
-test_data: !ref <save_folder>/smswsj_test_eval92.csv
+data_local_folder: data
+train_data: !ref <data_local_folder>/smswsj_train_si284.csv
+valid_data: !ref <data_local_folder>/smswsj_cv_dev93.csv
+test_data: !ref <data_local_folder>/smswsj_test_eval92.csv
 skip_prep: False
 
 
