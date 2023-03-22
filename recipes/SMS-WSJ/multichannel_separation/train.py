@@ -64,10 +64,10 @@ class Separation(sb.Brain):
         if not is_finite:
             self.nonfinite_count += 1
 
-            logger.warn(f"Loss is {loss}.")
+            logger.warning(f"Loss is {loss}.")
             for p in self.modules.parameters():
                 if not torch.isfinite(p).all():
-                    logger.warn("Parameter is not finite: " + str(p))
+                    logger.warning("Parameter is not finite: " + str(p))
 
             # we have good model, we should stop with the training
             # let's stop after `nonfinite_patience` consecutive steps
@@ -344,13 +344,14 @@ if __name__ == "__main__":
 
     if not hparams["test_only"]:
         # Training
-        separator.fit(
-            separator.hparams.epoch_counter,
-            train_data,
-            valid_data,
-            train_loader_kwargs=hparams["dataloader_opts"],
-            valid_loader_kwargs=hparams["dataloader_opts"],
-        )
+        with torch.autograd.detect_anomaly():
+            separator.fit(
+                separator.hparams.epoch_counter,
+                train_data,
+                valid_data,
+                train_loader_kwargs=hparams["dataloader_opts"],
+                valid_loader_kwargs=hparams["dataloader_opts"],
+            )
 
     # Eval
     separator.evaluate(test_data, min_key="si-snr")

@@ -120,7 +120,7 @@ SBtfinter: !new:speechbrain.lobes.models.dual_path.SBTransformerBlock
     use_positional_encoding: True
     norm_before: True
 
-CrossChannelAttention: !new:speechbrain.lobes.triple_path.CrossChannelAttentionLayer
+CrossChannelAttention: !new:speechbrain.lobes.models.triple_path.CrossChannelAttentionLayer
     d_model: !ref <out_channels>
     nhead: 8
     ref_audio_channel: !ref <ref_microphone>
