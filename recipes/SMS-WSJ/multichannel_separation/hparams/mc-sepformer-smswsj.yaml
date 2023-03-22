@@ -138,6 +138,7 @@ MaskNet: !new:speechbrain.lobes.models.triple_path.Triple_Path_Model
     norm: ln
     linear_layer_after_inter_intra: False
     skip_around_intra: True
+    mic_aggregation: "mean"
 
 Decoder: !new:speechbrain.lobes.models.triple_path.Decoder
     in_channels: !ref <N_encoder_out>

@@ -22,9 +22,10 @@ from speechbrain.lobes.models.dual_path import (
     SBRNNBlock,
 )
 
-from copy import deepcopy
+from functools import partial
 
 EPS = 1e-8
+
 
 class Encoder(nn.Module):
     """Convolutional Encoder Layer.
@@ -424,7 +425,7 @@ class Triple_Path_Model(nn.Module):
         linear_layer_after_inter_intra=True,
         use_global_pos_enc=False,
         max_length=20000,
-        mic_aggregation=None,
+        mic_aggregation="mean",
     ):
         super(Triple_Path_Model, self).__init__()
         self.K = K
@@ -466,8 +467,8 @@ class Triple_Path_Model(nn.Module):
         self.output_gate = nn.Sequential(
             nn.Conv1d(out_channels, out_channels, 1), nn.Sigmoid()
         )
-        if mic_aggregation is None:
-            mic_aggregation = lambda x: torch.mean(x, dim=1)
+        if mic_aggregation is None or mic_aggregation == "mean":
+            mic_aggregation = partial(torch.mean, dim=1)
         self.mic_aggregation = mic_aggregation
 
     def forward(self, x: torch.Tensor):

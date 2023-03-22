@@ -38,6 +38,7 @@ noprogressbar: False
 save_audio: True # Save estimated sources on disk
 n_audio_to_save: 20
 sample_rate: 8000
+ckpt_interval_minutes: 10
 
 # Training parameters
 N_epochs: 200
@@ -46,14 +47,18 @@ lr: 0.00015
 clip_grad_norm: 5
 loss_upper_lim: 999999  # this is the upper limit for an acceptable loss
 # if True, the training sequences are cut to a specified length
-limit_training_signal_len: False
+limit_training_signal_len: true
 # this is the length of sequences if we choose to limit
 # the signal length of training sequences
-training_signal_len: 32000000
+training_signal_len: 32000
 ref_microphone: 0  # reference signal is 0th channel
+# mix_microphones: [[0,3], [1,4], [2,5]]
+mix_microphones: [0,3]
 
 # Parameters for data augmentation
 reverb_source: True
+use_wavedrop: False
+use_speedperturb: True
 use_rand_shift: False
 min_shift: -8000
 max_shift: 8000
@@ -151,7 +156,7 @@ optimizer: !name:torch.optim.Adam
     lr: !ref <lr>
     weight_decay: 0
 
-si_snr: !new:speechbrain.nnet.losses.PitWrapper
+pit_si_snr: !new:speechbrain.nnet.losses.PitWrapper
     base_loss: !name:speechbrain.nnet.losses.cal_si_snr
 
 lr_scheduler: !new:speechbrain.nnet.schedulers.ReduceLROnPlateau
