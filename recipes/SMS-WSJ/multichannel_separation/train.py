@@ -344,14 +344,13 @@ if __name__ == "__main__":
 
     if not hparams["test_only"]:
         # Training
-        with torch.autograd.detect_anomaly():
-            separator.fit(
-                separator.hparams.epoch_counter,
-                train_data,
-                valid_data,
-                train_loader_kwargs=hparams["dataloader_opts"],
-                valid_loader_kwargs=hparams["dataloader_opts"],
-            )
+        separator.fit(
+            separator.hparams.epoch_counter,
+            train_data,
+            valid_data,
+            train_loader_kwargs=hparams["dataloader_opts"],
+            valid_loader_kwargs=hparams["dataloader_opts"],
+        )
 
     # Eval
     separator.evaluate(test_data, min_key="si-snr")

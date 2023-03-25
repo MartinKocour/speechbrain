@@ -361,7 +361,7 @@ class CrossChannelAttentionLayer(nn.Module):
         """
         B, C, N, K, S = x.shape
         # [BKS, C, N]
-        x = x.permute(0, 3, 4, 1, 2).contiguous().view(B * K * S, C, N)
+        x = x.permute(0, 3, 4, 1, 2).reshape(B * K * S, C, N)
 
         query = x
         if self.ref_audio_channel is not None:
@@ -370,7 +370,7 @@ class CrossChannelAttentionLayer(nn.Module):
         # [BKS, C, N]
         x = self.attn(query, x, x, return_attn_weights=False)
         # return orig shape, i.e. [B, C, N, K, S] or [B, N, K, S]
-        return x.contiguous().view(B, K, S, -1, N).permute(0, 3, 4, 1, 2).squeeze(1)
+        return x.reshape(B, K, S, -1, N).permute(0, 3, 4, 1, 2).squeeze(1)
 
 
 class Triple_Path_Model(nn.Module):
