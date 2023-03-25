@@ -100,6 +100,10 @@ class Encoder(nn.Module):
 
         return x
 
+    def load_from_sepformer(self, state_dct):
+        self.load_state_dict(state_dct)
+        return self
+
 
 class Decoder(nn.ConvTranspose1d):
     """A decoder layer that consists of ConvTranspose1d.
@@ -146,6 +150,10 @@ class Decoder(nn.ConvTranspose1d):
         else:
             x = torch.squeeze(x)
         return x
+
+    def load_from_sepformer(self, state_dct):
+        self.load_state_dict(state_dct)
+        return self
 
 
 class Triple_Computation_Block(nn.Module):
@@ -316,6 +324,15 @@ class Triple_Computation_Block(nn.Module):
         out = inter + intra
 
         return out
+
+    @staticmethod
+    def _remap_sepformer_state_key(key):
+        main_key, *subkeys = key.split(".")
+        if main_key == "intra_mdl":
+            main_key = "intra_chunk_mdl"
+        elif main_key == "inter_mdl":
+            main_key = "inter_chunk_mdl"
+        return '.'.join([main_key, *subkeys])
 
 
 class CrossChannelAttentionLayer(nn.Module):
@@ -556,6 +573,45 @@ class Triple_Path_Model(nn.Module):
         x = x.transpose(0, 1)
 
         return x
+
+    @staticmethod
+    def _remap_sepformer_state_key(key):
+        main_key, *subkeys = key.split(".")
+        if main_key == "dual_mdl":
+            main_key = "tripple_mdl"
+            new_subkeys = Triple_Computation_Block._remap_sepformer_state_key('.'.join(subkeys[1:]))
+            subkeys[1:] = new_subkeys.split(".")
+
+        return '.'.join([main_key, *subkeys])
+
+    def load_from_sepformer(self, state_dct):
+        new_state_dct = {}
+        for key in state_dct.keys():
+            nkey = self._remap_sepformer_state_key(key)
+            new_state_dct[nkey] = state_dct[key]
+
+        missing, unexpected = self.load_state_dict(new_state_dct, strict=False)
+
+        if len(unexpected) > 0:
+            msg = "Error(s) in loading state_dict for Tripple_Path_Model:\n"
+            msg += "Unexpected key(s) in state_dict:"
+            msg += ", ".join(map(lambda s: f'"{s}"', unexpected))
+            raise RuntimeError(msg)
+        elif len(missing) > 0:
+            ok = True
+            really_missing = []
+            for key in missing:
+                if (not "intra_channel_mdl" in key) and (not "intra_channel_norm" in key):
+                    ok = False
+                    really_missing.append(key)
+
+            if not ok:
+                msg = "Error(s) in loading state_dict for Tripple_Path_Model:\n"
+                msg += "Missing key(s) in state_dict: "
+                msg += ", ".join(map(lambda s: f'"{s}"', really_missing))
+                raise RuntimeError(msg)
+
+        return self
 
     def _padding(self, input, K):
         """Padding the audio times.
