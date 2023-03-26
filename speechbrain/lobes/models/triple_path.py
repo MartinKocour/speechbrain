@@ -598,14 +598,18 @@ class Triple_Path_Model(nn.Module):
             msg += ", ".join(map(lambda s: f'"{s}"', unexpected))
             raise RuntimeError(msg)
         elif len(missing) > 0:
-            ok = True
+            ok_keys = ["mic_aggregation", "intra_channel_mdl", "intra_channel_norm"]
             really_missing = []
             for key in missing:
-                if (not "intra_channel_mdl" in key) and (not "intra_channel_norm" in key):
-                    ok = False
+                find = False
+                for ok_key in ok_keys:
+                    if ok_key in key:
+                        find = True
+
+                if not find:
                     really_missing.append(key)
 
-            if not ok:
+            if len(really_missing) > 0:
                 msg = "Error(s) in loading state_dict for Tripple_Path_Model:\n"
                 msg += "Missing key(s) in state_dict: "
                 msg += ", ".join(map(lambda s: f'"{s}"', really_missing))
