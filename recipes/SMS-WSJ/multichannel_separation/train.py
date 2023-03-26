@@ -11,6 +11,8 @@ import torch
 import torchaudio
 import torch.nn.functional as F
 
+import numpy as np
+
 import speechbrain as sb
 from speechbrain.nnet import schedulers
 from speechbrain.utils.distributed import run_on_main
@@ -43,6 +45,8 @@ class Separation(sb.Brain):
                     self.scaler.update()
                     self.zero_grad()
                     self.optimizer_step += 1
+            else:
+                logging.warning("Skipping batch {}".format(batch.id))
         else:
             outputs = self.compute_forward(batch, sb.Stage.TRAIN)
             loss = self.compute_objectives(outputs, batch, sb.Stage.TRAIN)
@@ -55,6 +59,8 @@ class Separation(sb.Brain):
                         self.optimizer.step()
                     self.zero_grad()
                     self.optimizer_step += 1
+            else:
+                logging.warning("Skipping batch {}".format(batch.id))
 
         self.on_fit_batch_end(batch, outputs, loss, should_step)
         return loss.detach().cpu()
@@ -273,17 +279,44 @@ def dataio_prep(hparams):
         mix_sig = tmp[:mix_sig.size(0)]
         return mix_sig, s1_sig, s2_sig
 
+    @sb.utils.data_pipeline.takes("mix_sig")
+    @sb.utils.data_pipeline.provides("mix_sig")
+    def variable_mics(mix_sig):
+        import pdb; pdb.set_trace()
+        C, _ = mix_sig.shape
+        Cn = random.randint(1, C)
+        mics = np.random.choice(range(C), size=Cn, replace=False)
+        mics.sort()
+        mics = list(mics)
+        if "ref_microphone" in hparams and mics[0] != hparams["ref_microphone"]:
+            mics = [hparams["ref_microphone"]] + mics
+
+        np.random.shuffle(mics)
+        return mix_sig[mics]
+
     sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_mix)
     sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_s1)
     sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_s2)
     if hparams["limit_training_signal_len"]:
         train_data.add_dynamic_item(cut_audio_pipeline)
 
+    if "variable_microphones" in hparams and hparams["variable_microphones"]:
+        train_data.add_dynamic_item(variable_mics)
+
     sb.dataio.dataset.set_output_keys(
         datasets, ["id", "mix_sig", "s1_sig", "s2_sig"]
     )
 
     return train_data, valid_data, test_data
+
+
+def load_sepformer_weights(pretrained_obj, device=None):
+    def load_hook(obj, loadpath, device=None):
+        obj.load_from_sepformer(torch.load(loadpath, map_location=device))
+
+    custom_hooks = {name: load_hook for name in pretrained_obj.loadables}
+    pretrained_obj.add_custom_hooks(custom_hooks)
+    return pretrained_obj.load_collected(device)
 
 
 if __name__ == "__main__":
@@ -323,10 +356,17 @@ if __name__ == "__main__":
     # Create dataset objects
     train_data, valid_data, test_data = dataio_prep(hparams)
 
-    # Load pretrained model if pretrained_separator is present in the yaml
+    skip_layer_reset = False
     if "pretrained_separator" in hparams:
+        # Load pretrained model if pretrained_separator is present in the yaml
         run_on_main(hparams["pretrained_separator"].collect_files)
         hparams["pretrained_separator"].load_collected()
+        skip_layer_reset = True
+    elif "pretrained_sepformer" in hparams:
+        # Load pretrained sepformer if pretrained_sepformer is present in the yaml
+        run_on_main(hparams["pretrained_sepformer"].collect_files)
+        load_sepformer_weights(hparams["pretrained_sepformer"], device="cpu")
+        skip_layer_reset = True
 
     # Brain class initialization
     separator = Separation(
@@ -338,7 +378,7 @@ if __name__ == "__main__":
     )
 
     # re-initialize the parameters if we don't use a pretrained model
-    if "pretrained_separator" not in hparams:
+    if not skip_layer_reset:
         for module in separator.modules.values():
             separator.reset_layer_recursively(module)
 
