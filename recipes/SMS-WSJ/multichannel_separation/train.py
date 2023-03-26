@@ -282,7 +282,6 @@ def dataio_prep(hparams):
     @sb.utils.data_pipeline.takes("mix_sig")
     @sb.utils.data_pipeline.provides("mix_sig")
     def variable_mics(mix_sig):
-        import pdb; pdb.set_trace()
         C, _ = mix_sig.shape
         Cn = random.randint(1, C)
         mics = np.random.choice(range(C), size=Cn, replace=False)
