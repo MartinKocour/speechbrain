@@ -6,6 +6,8 @@ Recipe for training a neral speech separation on SMS-WSJ
 import sys
 import logging
 import random
+import os
+import json
 
 import torch
 import torchaudio
@@ -19,6 +21,8 @@ from speechbrain.utils.distributed import run_on_main
 from hyperpyyaml import load_hyperpyyaml
 
 from safe_gpu import safe_gpu
+
+import pb_bss
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +134,7 @@ class Separation(sb.Brain):
         targets = [batch.s1_sig, batch.s2_sig]
         targets = torch.cat([t[0].unsqueeze(-1) for t in targets], dim=-1).to(self.device)
 
-        loss, _ = self.hparams.pit_si_snr(targets, est_source)
+        loss, perm = self.hparams.pit_si_snr(targets, est_source)
 
         if stage == sb.Stage.TRAIN:
             # SI-SNR is `inf` if `est_src`` and `target` are similar
@@ -140,7 +144,40 @@ class Separation(sb.Brain):
             else:
                 return loss_to_keep.mean()
 
+        if stage == sb.Stage.TEST:
+            def pbs_df(target, est_source):
+                return (
+                    target.detach().cpu().transpose(1, 2).double().numpy(),
+                    est_source.detach().cpu().transpose(1, 2).double().numpy()
+                )
+            est_source_p = torch.stack([est_source[i, :, p] for i, p in enumerate(perm)])
+            si_sdr = pb_bss.evaluation.si_sdr(*pbs_df(targets, est_source_p))
+            si_sdr = torch.from_numpy(si_sdr).mean(dim=1)
+            stoi = pb_bss.evaluation.stoi(*pbs_df(targets, est_source_p), self.hparams.sample_rate)
+            stoi = torch.from_numpy(stoi).mean(dim=1)
+            pesq = pb_bss.evaluation.pesq(*pbs_df(targets, est_source_p), self.hparams.sample_rate)
+            pesq = torch.from_numpy(pesq).mean(dim=1)
+
+            self.test_stats["stoi"] = self.update_average(stoi.mean(), self.test_stats["stoi"])
+            self.test_stats["pesq"] = self.update_average(pesq.mean(), self.test_stats["pesq"])
+            self.test_stats["si_sdr"] = self.update_average(si_sdr.mean(), self.test_stats["si_sdr"])
+
+            self.test_results += [
+                {
+                    "id": s_id,
+                    "stoi": s_stoi,
+                    "pesq": s_pesq,
+                    "si_sdr": s_si_sdr,
+                }
+                for s_id, s_stoi, s_pesq, s_si_sdr in zip(batch.id, stoi.numpy(), pesq.numpy(), si_sdr.numpy())
+            ]
+
         return loss.mean()
+
+    def on_stage_start(self, stage, epoch=None):
+        if stage == sb.Stage.TEST:
+            self.test_results = []
+            self.test_stats = {"stoi": .0, "pesq": .0, "si_sdr": .0}
 
     def on_stage_end(self, stage, stage_loss, epoch):
         # Compute/store loss
@@ -173,8 +210,10 @@ class Separation(sb.Brain):
         elif stage == sb.Stage.TEST:
             self.hparams.train_logger.log_stats(
                 stats_meta={"Epoch loaded": self.hparams.epoch_counter.current},
-                test_stats=stage_loss,
+                test_stats={**stage_stats, **self.test_stats},
             )
+            with open(os.path.join(self.hparams.output_folder, "test_results.json"), "w") as f:
+                json.dump(self.test_results, f)
 
     def reset_layer_recursively(self, layer):
         """Reinitializes the parameters of the neural networks"""
