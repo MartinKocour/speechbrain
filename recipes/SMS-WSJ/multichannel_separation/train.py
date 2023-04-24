@@ -172,6 +172,10 @@ class Separation(sb.Brain):
                 for s_id, s_stoi, s_pesq, s_si_sdr in zip(batch.id, stoi.numpy(), pesq.numpy(), si_sdr.numpy())
             ]
 
+            if self.hparams.save_audio and self.step < self.hparams.n_audio_to_save:
+                for est_sources, batch_id in zip(est_source.cpu(), batch.id):
+                    save_audio(est_sources.t(), batch_id, self.hparams)
+
         return loss.mean()
 
     def on_stage_start(self, stage, epoch=None):
@@ -298,10 +302,6 @@ def dataio_prep(hparams):
         else:
             tmp = torch.cat([mix_sig, s1_sig, s2_sig], dim=0)
 
-        # tmp, gap = hparams["MaskNet"]._Segmentation(tmp.unsqueeze(0), chunk_length)
-        # tmp = tmp.squeeze(0)
-        # chunk_idx = random.randint(0, tmp.size(-1) - 1)
-        # tmp = tmp[..., chunk_idx]
         chunk_length = random.randint(hparams["sample_rate"], hparams["training_signal_len"])
         assert chunk_length > 0
 
@@ -332,6 +332,11 @@ def dataio_prep(hparams):
         np.random.shuffle(mics)
         return mix_sig[mics]
 
+    @sb.utils.data_pipeline.takes("mix_sig")
+    @sb.utils.data_pipeline.provides("mix_sig")
+    def squeeze_mix(mix_sig):
+        return mix_sig.squeeze(dim=0)
+
     sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_mix)
     sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_s1)
     sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_s2)
@@ -339,7 +344,12 @@ def dataio_prep(hparams):
         train_data.add_dynamic_item(cut_audio_pipeline)
 
     if "variable_microphones" in hparams and hparams["variable_microphones"]:
+        logger.info("Using variable microphones")
         train_data.add_dynamic_item(variable_mics)
+
+    if "squeeze_microphones" in hparams and hparams["squeeze_microphones"]:
+        logger.info("Keeping just single channel data")
+        sb.dataio.dataset.add_dynamic_item(datasets, squeeze_mix)
 
     sb.dataio.dataset.set_output_keys(
         datasets, ["id", "mix_sig", "s1_sig", "s2_sig"]
@@ -355,6 +365,18 @@ def load_sepformer_weights(pretrained_obj, device=None):
     custom_hooks = {name: load_hook for name in pretrained_obj.loadables}
     pretrained_obj.add_custom_hooks(custom_hooks)
     return pretrained_obj.load_collected(device)
+
+
+def save_audio(est_sources, batch_id, hparams):
+    if not hasattr(hparams, "audio_folder"):
+        hparams.audio_folder = os.path.join(hparams.output_folder, "audio_samples")
+
+    if not os.path.exists(hparams.audio_folder):
+        os.makedirs(hparams.audio_folder)
+
+    for i, est_src in enumerate(est_sources):
+        filename = os.path.join(hparams.audio_folder, batch_id + "_" + str(i) + ".wav")
+        torchaudio.save(filename, est_src.unsqueeze(0), hparams.sample_rate)
 
 
 if __name__ == "__main__":
