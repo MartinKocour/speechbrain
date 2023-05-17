@@ -368,26 +368,26 @@ class CrossChannelAttentionLayer(nn.Module):
         Arguments
         ---------
         x: torch.Tensor
-            Input tensor of size [B, C, N, K, S]
+            Input tensor of size [B, C, N, L]
 
         Returns
         -------
         out: torch.Tensor
-            Tensor of shape [B, C, N, K, S]
-            or [B, N, K, S] if `ref_audio_channel` != None
+            Tensor of shape [B, C, N, L]
+            or [B, N, L] if `ref_audio_channel` != None
         """
-        B, C, N, K, S = x.shape
-        # [BKS, C, N]
-        x = x.permute(0, 3, 4, 1, 2).reshape(B * K * S, C, N)
+        B, C, N, L = x.shape
+        # [BL, C, N]
+        x = x.permute(0, 3, 1, 2).reshape(B * L, C, N)
 
         query = x
         if self.ref_audio_channel is not None:
             query = x[:, self.ref_audio_channel, :].unsqueeze(1)
 
-        # [BKS, C, N]
+        # [BL, C, N]
         x = self.attn(query, x, x, return_attn_weights=False)
-        # return orig shape, i.e. [B, C, N, K, S] or [B, N, K, S]
-        return x.reshape(B, K, S, -1, N).permute(0, 3, 4, 1, 2).squeeze(1)
+        # return orig shape, i.e. [B, C, N, L] or [B, N, L]
+        return x.reshape(B, L, -1, N).permute(0, 2, 3, 1).squeeze(1)
 
 
 class Triple_Path_Model(nn.Module):
@@ -419,10 +419,6 @@ class Triple_Path_Model(nn.Module):
         Global positional encodings.
     max_length : int
         Maximum sequence length.
-    mic_aggregation : Optional[torch.nn.module]
-        model to aggegate input microphones (audio channels)
-        e.g. cross-channel attention
-        If `None` torch.mean is used.
 
     Example
     ---------
@@ -450,7 +446,6 @@ class Triple_Path_Model(nn.Module):
         linear_layer_after_inter_intra=True,
         use_global_pos_enc=False,
         max_length=20000,
-        mic_aggregation="mean",
     ):
         super(Triple_Path_Model, self).__init__()
         self.K = K
@@ -492,9 +487,6 @@ class Triple_Path_Model(nn.Module):
         self.output_gate = nn.Sequential(
             nn.Conv1d(out_channels, out_channels, 1), nn.Sigmoid()
         )
-        if mic_aggregation is None or mic_aggregation == "mean":
-            mic_aggregation = partial(torch.mean, dim=1)
-        self.mic_aggregation = mic_aggregation
 
     def forward(self, x: torch.Tensor):
         """Returns the output tensor.
@@ -546,31 +538,30 @@ class Triple_Path_Model(nn.Module):
             x = self.tripple_mdl[i](x)
         x = self.prelu(x)
 
-        # aggregate over audio channels
-        # [B, N, K, S]
-        x = self.mic_aggregation(x)
+        # [BC, N, K, S]
+        x = x.contiguous().view(B*C, N, K, S)
 
-        # [B, N*spks, K, S]
+        # [BC, N*spks, K, S]
         x = self.conv2d(x)
-        B, _, K, S = x.shape
+        _, _, K, S = x.shape
 
-        # [B*spks, N, K, S]
-        x = x.view(B * self.num_spks, -1, K, S)
+        # [BC*spks, N, K, S]
+        x = x.view(B * C * self.num_spks, -1, K, S)
 
-        # [B*spks, N, L]
+        # [BC*spks, N, L]
         x = self._over_add(x, gap)
         x = self.output(x) * self.output_gate(x)
 
-        # [B*spks, N, L]
+        # [BC*spks, N, L]
         x = self.end_conv1x1(x)
 
-        # [B, spks, N, L]
+        # [B, C, spks, N, L]
         _, N, L = x.shape
-        x = x.view(B, self.num_spks, N, L)
+        x = x.view(B, C, self.num_spks, N, L)
         x = self.activation(x)
 
-        # [spks, B, N, L]
-        x = x.transpose(0, 1)
+        # [spks, B, C, N, L]
+        x = x.permute(2, 0, 1, 3, 4).contiguous()
 
         return x
 
@@ -598,7 +589,7 @@ class Triple_Path_Model(nn.Module):
             msg += ", ".join(map(lambda s: f'"{s}"', unexpected))
             raise RuntimeError(msg)
         elif len(missing) > 0:
-            ok_keys = ["mic_aggregation", "intra_channel_mdl", "intra_channel_norm"]
+            ok_keys = ["intra_channel_mdl", "intra_channel_norm"]
             really_missing = []
             for key in missing:
                 find = False
@@ -793,6 +784,7 @@ class MultiChannelSepformerWrapper(nn.Module):
         inter_use_positional=True,
         intra_norm_before=True,
         inter_norm_before=True,
+        mic_aggregation="cca", # [mean, cca]
         ref_microphone=0,
     ):
 
@@ -842,6 +834,19 @@ class MultiChannelSepformerWrapper(nn.Module):
             skip_around_intra=masknet_extraskipconnection,
             linear_layer_after_inter_intra=masknet_useextralinearlayer,
         )
+
+        if mic_aggregation == "mean":
+            self.mic_aggregation = partial(torch.mean, dim=2)
+        elif mic_aggregation == "cca":
+            self.mic_aggregation = CrossChannelAttentionLayer(
+                d_model=encoder_out_nchannels,
+                nhead=1,
+                ref_audio_channel=ref_microphone,
+            )
+            self.reset_layer_recursively(self.mic_aggregation)
+        else:
+            raise ValueError("Unknow micrphone aggregation method: " + mic_aggregation)
+
         self.decoder = Decoder(
             in_channels=encoder_out_nchannels,
             out_channels=encoder_in_nchannels,
@@ -865,29 +870,35 @@ class MultiChannelSepformerWrapper(nn.Module):
                 self.reset_layer_recursively(child_layer)
 
     def forward(self, mix):
-        """ Processes the input tensor x and returns an output tensor."""
+        """ Processes the input tensor x [B, C, L] and returns an output tensor."""
         # [B, C, N, L]
         mix_w = self.encoder(mix)
-        # [spks, B, N, L]
+        # [spks, B, C, N, L]
         est_mask = self.masknet(mix_w)
-        # [spks, B, N, L]
-        mix_w = mix_w[:, self.ref_microphone, ...]
-        # [spks, B, N, L]
+        # [spks, B, C, N, L]
         mix_w = torch.stack([mix_w] * self.num_spks)
-        # [spks, B, N, L]
+        # [spks, B, C, N, L]
         sep_h = mix_w * est_mask
-
-        # Decoding
-        est_source = torch.cat(
+        # [spks, B, N, L]
+        sep_h = torch.stack(
             [
-                self.decoder(sep_h[i]).unsqueeze(-1)
+                self.mic_aggregation(sep_h[i])
+                for i in range(self.num_spks)
+            ],
+            dim=0
+        )
+        # Decoding
+        # [B, T, spks]
+        est_source = torch.stack(
+            [
+                self.decoder(sep_h[i])
                 for i in range(self.num_spks)
             ],
             dim=-1,
         )
 
         # T changed after conv1d in encoder, fix it here
-        T_origin = mix.size(1)
+        T_origin = mix.size(-1)
         T_est = est_source.size(1)
         if T_origin > T_est:
             est_source = F.pad(est_source, (0, 0, 0, T_origin - T_est))

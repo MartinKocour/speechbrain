@@ -110,10 +110,18 @@ class Separation(sb.Brain):
         mix_w = mix_w[:, self.hparams.ref_microphone, ...]
         mix_w = torch.stack([mix_w] * self.hparams.num_spks)
         sep_h = mix_w * est_mask
-        # Decoding
-        est_source = torch.cat(
+        # Channel Aggregation
+        sep_h = torch.stack(
             [
-                self.modules.decoder(sep_h[i]).unsqueeze(-1)
+                self.modules.aggregator(sep_h[i])
+                for i in range(self.hparams.num_spks)
+            ],
+            dim=0
+        )
+        # Decoding
+        est_source = torch.stack(
+            [
+                self.modules.decoder(sep_h[i])
                 for i in range(self.hparams.num_spks)
             ],
             dim=-1,
