@@ -54,6 +54,7 @@ class DynamicMixingConfig:
     max_source_len: int = 320000
     multi_channel: bool = False
     n_channels: int = 2
+    seed:Optional[int] = None
 
     @classmethod
     def from_hparams(cls, hparams):
@@ -228,6 +229,8 @@ class DynamicMixingDataset(torch.utils.data.Dataset):
                 "mix_info",
             ]
         )
+        if config.seed is not None:
+            self.manual_seed(config.seed)
 
     @classmethod
     def from_didataset(
@@ -347,6 +350,11 @@ class DynamicMixingDataset(torch.utils.data.Dataset):
         )
 
         return mixture, padded_sources, noise, rir, mix_info
+
+    def manual_seed(seed):
+        torch.manual_seed(seed)
+        random.seed(seed)
+        np.random.seed(seed)
 
     def __prepare_source__(self, source_file, is_noise=False, mix_info=MixInfo()):
         source, fs = torchaudio.load(source_file)

@@ -191,6 +191,11 @@ class Separation(sb.Brain):
             self.test_results = []
             self.test_stats = {"stoi": .0, "pesq": .0, "si_sdr": .0}
 
+        if self.debug:
+            torch.manual_seed(self.hparams.seed)
+            random.seed(self.hparams.seed)
+            np.random.seed(self.hparams.seed)
+
     def on_stage_end(self, stage, stage_loss, epoch):
         # Compute/store loss
         stage_stats = {"si-snr": stage_loss}
